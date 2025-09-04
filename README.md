@@ -10,9 +10,7 @@
 
 <div align="center">
  
- 👨🏻‍🎓 I’m currently educating at **[Montcalm secondary school](https://montcalm.tvdsb.ca/en/index.aspx)**
- 
- 🌱 I’m currently learning **3D modeling**
+ 👨🏻‍🎓 I’m currently educating at **[Fanshawe College](https://montcalm.tvdsb.ca/en/index.aspx)**
 
 ⚡ Fun fact **I'm love eating Pizza🍕**
 
