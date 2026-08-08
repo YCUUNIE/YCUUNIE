@@ -1,0 +1,17 @@
+{
+  "name": "ai-agent-world",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A fully local, extensible 2D AI-agent simulation platform (Phaser 3 + FastAPI).",
+  "scripts": {
+    "dev": "concurrently -n backend,frontend -c blue,green \"npm:dev:backend\" \"npm:dev:frontend\"",
+    "dev:backend": "python -m backend.app.main",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "setup": "python -m venv .venv && pip install -r backend/requirements.txt && npm --prefix frontend install",
+    "test": "python -m pytest backend/tests -q"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
