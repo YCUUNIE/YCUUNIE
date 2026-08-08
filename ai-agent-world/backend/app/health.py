@@ -20,7 +20,9 @@ _start_time = time.time()
 
 
 async def health_basic() -> Dict[str, Any]:
-    return {"status": "healthy", "uptime": round(time.time() - _start_time, 1)}
+    from . import BUILD, __version__
+    return {"status": "healthy", "uptime": round(time.time() - _start_time, 1),
+            "version": __version__, "build": BUILD}
 
 
 async def health_detailed() -> Dict[str, Any]:

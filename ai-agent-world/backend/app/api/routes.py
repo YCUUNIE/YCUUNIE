@@ -93,6 +93,12 @@ async def websocket_endpoint(ws: WebSocket):
 
 
 # --- state & config --------------------------------------------------------
+@router.get("/api/version")
+async def api_version():
+    from .. import BUILD, __version__
+    return {"version": __version__, "build": BUILD}
+
+
 @router.get("/api/config")
 async def api_config():
     return get_config().as_public()
@@ -243,10 +249,19 @@ def _interpret_nl(text: str) -> Optional[Dict[str, Any]]:
     low = text.lower()
     rt = get_runtime()
 
-    if re.search(r"\bpause\b", low) and "simulation" in low:
+    # bare control words typed as a whole message
+    bare = low.strip().strip(".!?")
+    if bare in ("stop", "pause", "halt", "freeze"):
+        rt.set_paused(True)
+        return _sys("Simulation paused. (Type 'resume' or press ▶ to continue.)")
+    if bare in ("start", "resume", "play", "continue", "go", "unpause"):
+        rt.set_paused(False)
+        return _sys("Simulation resumed.")
+
+    if re.search(r"\b(pause|stop|halt)\b", low) and ("simulation" in low or "sim" in low or "agents" in low):
         rt.set_paused(True)
         return _sys("Simulation paused.")
-    if re.search(r"\bresume\b|\bunpause\b", low) and ("simulation" in low or "sim" in low):
+    if re.search(r"\b(resume|unpause|start|continue)\b", low) and ("simulation" in low or "sim" in low):
         rt.set_paused(False)
         return _sys("Simulation resumed.")
     m = re.search(r"speed (?:up )?(?:to )?(?:x)?(\d+)", low)

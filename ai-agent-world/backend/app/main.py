@@ -90,6 +90,9 @@ async def _seed_memory() -> None:
 
 @app.on_event("startup")
 async def on_startup() -> None:
+    from . import BUILD, __version__
+    print(f"\n  AI Agent World  v{__version__}  (build {BUILD})")
+    print("  Backend ready on http://127.0.0.1:8000\n", flush=True)
     event_bus.subscribe(_on_event)
     get_self_healing()  # subscribe to error events
     rt = get_runtime()
