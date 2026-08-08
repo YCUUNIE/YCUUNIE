@@ -187,6 +187,9 @@ class AgentRuntime:
 
             decision = await self._decide(agent, perception, memories)
 
+            # guard against infinite action loops (spec: "infinite action loop")
+            decision = await self._loop_guard(agent, decision)
+
             # act
             await self._apply_decision(agent, decision, perception)
 
@@ -301,8 +304,17 @@ class AgentRuntime:
             agent.inbox = agent.inbox[1:]
             sender = msg["from"]
             text = msg["message"].lower()
-            # Engineer/Researcher respond to a discovery by going to investigate.
-            if any(w in text for w in ("found", "structure", "discover", "strange", "unusual", "investigate")):
+            sig = f"{sender}:{text}"
+            # Ignore a message identical to the last one we handled (kills echo loops).
+            if agent.flags.get("last_inbox_sig") == sig:
+                return Decision(summary=f"{agent.name} already handled {sender}'s message",
+                                intent="idle", speech=None,
+                                action={"type": "idle", "reason": "already responded"})
+            agent.flags["last_inbox_sig"] = sig
+            # A discovery report: go investigate (once per report).
+            discovery = any(w in text for w in ("found", "structure", "discover", "strange", "unusual", "investigate"))
+            if discovery and not agent.flags.get("investigated_" + sender):
+                agent.flags["investigated_" + sender] = True
                 loc = "Unknown Structure" if agent.role != "Explorer" else "Northern Forest"
                 reply = ("On my way to take a look." if traits["practical"] or traits["risk"]
                          else "Interesting — I'll record this and come observe.")
@@ -313,10 +325,10 @@ class AgentRuntime:
                     memory={"should_store": True, "importance": "medium",
                             "content": f"{sender} told me: {msg['message']}"},
                 )
-            reply = "Understood." if traits["cautious"] else "Got it — thanks!"
-            return Decision(summary=f"Replying to {sender}", intent="reply",
-                            speech=f"{sender}, {reply}",
-                            action={"type": "talk_to_agent", "target": sender, "message": reply},
+            # Any other message: note it internally. Do NOT reply back — replying
+            # creates a new inbound message and can ping-pong forever.
+            return Decision(summary=f"{agent.name} notes {sender}'s message", intent="acknowledge",
+                            speech=None, action={"type": "idle", "reason": f"heard {sender}"},
                             memory={"should_store": True, "importance": "low",
                                     "content": f"{sender} said: {msg['message']}"})
 
@@ -337,9 +349,11 @@ class AgentRuntime:
 
         # 3) Role-driven default behaviour.
         if agent.role == "Explorer":
-            # explore undiscovered / distant locations; announce discoveries
             structure = self.world.objects.get("structure_1")
-            if structure and structure.discovered and structure.discovered_by == agent.name and random.random() < 0.6:
+            discovered_by_me = bool(structure and structure.discovered and structure.discovered_by == agent.name)
+            # Announce the discovery to Nova exactly ONCE.
+            if discovered_by_me and not agent.flags.get("shared_structure"):
+                agent.flags["shared_structure"] = True
                 return Decision(
                     summary="Alex shares the discovery with Nova",
                     intent="share", speech="I found a strange structure near the northern forest!",
@@ -348,7 +362,18 @@ class AgentRuntime:
                     memory={"should_store": True, "importance": "high",
                             "content": "I discovered a strange structure near the northern forest and told Nova."},
                 )
-            target = random.choice(["Northern Forest", "Unknown Structure", "River", "Resource Area"])
+            # Otherwise keep exploring somewhere new (avoid repeating the last spot).
+            options = ["Northern Forest", "River", "Resource Area", "Village", "Workshop"]
+            if discovered_by_me:
+                options = [o for o in options if o != "Unknown Structure"]
+            last = agent.flags.get("last_explore_target")
+            options = [o for o in options if o != last] or options
+            target = random.choice(options)
+            agent.flags["last_explore_target"] = target
+            if random.random() < 0.35:
+                return Decision(summary=f"Alex scans the area around {perception['location']}",
+                                intent="observe", speech=None,
+                                action={"type": "observe_area", "radius": 240})
             return Decision(summary=f"Alex explores toward {target}", intent="explore",
                             speech=None, action={"type": "move_to_location", "location": target},
                             memory={"should_store": False, "content": ""})
@@ -387,6 +412,46 @@ class AgentRuntime:
         return Decision(summary=f"{agent.name} waits", intent="idle",
                         action={"type": "idle", "reason": "no pressing goal"})
 
+    # --- loop detection & break-out ---------------------------------------
+    async def _loop_guard(self, agent: Agent, decision: Decision) -> Decision:
+        """If an agent chooses the same action+speech three cycles running, treat
+        it as a stuck loop, self-heal, and force a different action."""
+        sig = (decision.action.type + "|" + (decision.speech or "")[:50] + "|"
+               + json.dumps(decision.action.model_dump(), sort_keys=True, default=str)[:120])
+        # idle is a legitimate resting state; don't count it as a loop.
+        if decision.action.type == "idle":
+            agent.loop_signature = sig
+            agent.loop_repeat = 0
+            return decision
+        if sig == agent.loop_signature:
+            agent.loop_repeat += 1
+        else:
+            agent.loop_signature = sig
+            agent.loop_repeat = 0
+        if agent.loop_repeat >= 2:  # the 3rd identical action in a row
+            agent.loop_repeat = 0
+            agent.loop_signature = ""
+            await event_bus.emit("agent.error", agent_id=agent.id, agent_name=agent.name,
+                                 scope="loop", message="Repeated identical action detected; breaking the loop")
+            alt = self._break_loop_action(agent)
+            await event_bus.emit("agent.recovered", agent_id=agent.id, agent_name=agent.name,
+                                 reason="broke out of an action loop")
+            return alt
+        return decision
+
+    def _break_loop_action(self, agent: Agent) -> Decision:
+        if agent.role == "Explorer":
+            opts = [n for n in self.world.locations if n != agent.flags.get("last_explore_target")]
+            target = random.choice(opts) if opts else "Village"
+            agent.flags["last_explore_target"] = target
+            return Decision(summary=f"{agent.name} changes course to {target}", intent="explore",
+                            action={"type": "move_to_location", "location": target})
+        if agent.role == "Engineer":
+            return Decision(summary=f"{agent.name} gets back to building", intent="build",
+                            action={"type": "work", "target": "workshop", "note": "back to building"})
+        return Decision(summary=f"{agent.name} pauses to observe", intent="observe",
+                        action={"type": "observe_area", "radius": 200})
+
     # --- apply decision ----------------------------------------------------
     async def _apply_decision(self, agent: Agent, decision: Decision, perception: Dict[str, Any]) -> None:
         agent.last_summary = decision.summary
@@ -412,8 +477,10 @@ class AgentRuntime:
                 await event_bus.emit("agent.memory.created", agent_id=agent.id,
                                      importance="high", content=f"Discovered {obj['label']}")
 
-        # store requested memory
-        if decision.memory.should_store and decision.memory.content:
+        # store requested memory (skip identical consecutive writes to avoid spam)
+        if (decision.memory.should_store and decision.memory.content
+                and decision.memory.content != agent.last_memory_content):
+            agent.last_memory_content = decision.memory.content
             mem = await self.memory.remember(Memory.new(
                 agent.name, decision.memory.content, importance=decision.memory.importance.value,
                 kind="memory", source="world"))

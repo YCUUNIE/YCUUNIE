@@ -67,6 +67,10 @@ class Agent:
     # bookkeeping
     inbox: List[Dict[str, Any]] = field(default_factory=list)
     relationships: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    flags: Dict[str, Any] = field(default_factory=dict)   # transient behaviour memory (e.g. "already announced")
+    loop_signature: str = ""                              # last action signature (loop detection)
+    loop_repeat: int = 0
+    last_memory_content: str = ""                         # dedupe identical consecutive memories
     last_action: Optional[Dict[str, Any]] = None
     last_summary: str = ""
     last_error: Optional[str] = None
