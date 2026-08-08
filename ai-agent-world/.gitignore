@@ -15,6 +15,7 @@ data/*.db-journal
 
 # Runtime-generated Obsidian content (the app regenerates/appends on run).
 # Folder structure + example notes are kept; churn is ignored.
+obsidian/AI-Agents/Agents/*.md
 obsidian/AI-Agents/Memories/*
 !obsidian/AI-Agents/Memories/.gitkeep
 obsidian/AI-Agents/Conversations/*
